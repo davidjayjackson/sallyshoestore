@@ -1,0 +1,213 @@
+---
+title: "Sally's Show Store Data"
+format: html
+editor: visual
+---
+
+```{r, message=TRUE,error=FALSE}
+library(tidyverse)
+library(duckdb)
+library(charlatan)
+library(arrow)
+
+# Connect to DuckDB and write table
+con <- dbConnect(duckdb::duckdb(), dbdir = "sally_shoes.duckdb", read_only = FALSE)
+
+
+```
+
+### Create 10,000 shoe Sales Orders
+
+```{r}
+
+set.seed(123)
+
+# Total rows
+n_rows <- 40000
+
+# Generate customers
+customers <- ch_name(n = 5000)
+customer_ids <- seq_along(customers)
+
+# Realistic shoe brands
+brands <- c("Nike", "Adidas", "Puma", "Reebok", "New Balance",
+            "Converse", "Vans", "Under Armour", "ASICS", "Skechers")
+
+# Create 50 products with real brand names
+products <- tibble(
+  product_id = 1:50,
+  brand = sample(brands, 50, replace = TRUE),
+  product_name = paste(brand, "Model", sample(100:999, 50, replace = TRUE)),
+  price = runif(50, 50, 200)
+)
+
+# Generate orders (multiple rows per order)
+orders <- tibble(
+  order_id = sample(10000:19999, n_rows, replace = TRUE),
+  customer_id = sample(customer_ids, n_rows, replace = TRUE),
+  order_date = sample(seq(as.Date('2023-01-01'), as.Date('2025-09-30'), by="day"), n_rows, replace = TRUE),
+  product_id = sample(products$product_id, n_rows, replace = TRUE),
+  quantity = sample(1:5, n_rows, replace = TRUE)
+)
+
+# Merge with product details
+sales_data <- orders %>%
+  left_join(products, by = "product_id") %>%
+  mutate(total_price = round(quantity * price, 2)) %>%
+  select(order_id, customer_id, order_date, product_id, brand, product_name, quantity, price, total_price)
+
+# Create Parquet sales file.
+sales_data |> write_csv('./sallyshoestore.csv')
+dbWriteTable(con, "sales", sales_data, overwrite = TRUE)
+
+```
+
+```{r}
+# Preview
+dbGetQuery(con, "SELECT * FROM sales LIMIT 5")
+
+# dbDisconnect(con, shutdown = TRUE)
+```
+
+## Basic EDA
+
+### Order Count by Brand
+
+```{r}
+# Preview
+dbGetQuery(con, "SELECT brand, count(*) as brand_count, 
+                 FROM sales 
+                group by brand 
+                order by  brand_count desc") |> 
+                ggplot() + geom_col(aes(x=brand_count,y=reorder(brand,brand_count),fill=brand)) +
+                # theme(axis.text.x = element_blank(),
+                # axis.ticks.x = element_blank(),
+                # axis.title.x = element_blank()) +
+                labs(title="Brand Ranked by Number of Orders", x="Orders", y="Brands")
+                
+```
+
+### Meadian Sales AAmount by Brand
+
+```{r}
+# Preview
+dbGetQuery(con, "SELECT brand, median(total_price) median_sales,
+            FROM sales  group by brand order by   median_sales desc") |>
+  ggplot() + geom_col(aes(x=median_sales,y=reorder(brand,median_sales),fill=brand)) +
+               # theme(axis.text.x = element_blank(),
+               # axis.ticks.x = element_blank(),
+               # axis.title.x = element_blank()) +
+                labs(title="Brand Ranked by Median Order Amount", x="Median Dollars", y="Brands")
+                
+```
+
+### Mean Order in Dollars by Brand
+
+```{r}
+# Preview
+dbGetQuery(con, "SELECT brand, avg(total_price) median_sales,
+            FROM sales  group by brand order by   median_sales desc") |>
+  ggplot() + geom_col(aes(x=median_sales,y=reorder(brand,median_sales),fill=brand)) +
+               # theme(axis.text.x = element_blank(),
+               # axis.ticks.x = element_blank(),
+               # axis.title.x = element_blank()) +
+                labs(title="Brand Ranked by Average Order Amount", x="Average Dollars", y="Brands")
+
+```
+
+### Brands Ranked by Total Sales
+
+```{r}
+# Preview
+dbGetQuery(con, "SELECT brand, sum(total_price) median_sales,
+            FROM sales  group by brand order by   median_sales desc") |>
+  ggplot() + geom_col(aes(x=median_sales,y=reorder(brand,median_sales),fill=brand)) +
+               # theme(axis.text.x = element_blank(),
+               # axis.ticks.x = element_blank(),
+               # axis.title.x = element_blank()) +
+                labs(title="Brand Ranked by Total Sales", x="Total Dollars", y="Brands")
+
+```
+
+### Orders by Date
+
+```{r}
+# Preview
+dbGetQuery(con, "SELECT order_date, count(*) median_sales,
+            FROM sales  group by order_date order by  order_date") |>
+  ggplot() + geom_line(aes(x=order_date,y=median_sales)) +
+               # theme(axis.text.x = element_blank(),
+               # axis.ticks.x = element_blank(),
+               # axis.title.x = element_blank()) +
+                labs(title="Orders By Order Date", x="Order Date", y="Num. of Orders") +
+  geom_smooth(aes(x=order_date,y=median_sales))
+
+```
+
+### Total Sales by Date
+
+```{r}
+# Preview
+dbGetQuery(con, "SELECT order_date, sum(total_price) median_sales,
+            FROM sales  group by order_date order by  order_date") |>
+  ggplot() + geom_line(aes(x=order_date,y=median_sales)) +
+               # theme(axis.text.x = element_blank(),
+               # axis.ticks.x = element_blank(),
+               # axis.title.x = element_blank()) +
+                labs(title="Total Sales By Order Date", x="Order Date", y="Toal Sales") +
+  geom_smooth(aes(x=order_date,y=median_sales))
+
+```
+
+### Average Sales by Date
+
+```{r}
+# Preview
+dbGetQuery(con, "SELECT order_date, avg(total_price) median_sales,
+            FROM sales  group by order_date order by  order_date") |>
+  ggplot() + geom_line(aes(x=order_date,y=median_sales)) +
+               # theme(axis.text.x = element_blank(),
+               # axis.ticks.x = element_blank(),
+               # axis.title.x = element_blank()) +
+                labs(title="Average Sales By Order Date", x="Order Date", y="Average Sales") +
+  geom_smooth(aes(x=order_date,y=median_sales),method="lm")
+
+```
+
+### Customer Ranked By Order Count
+
+```{r}
+dbGetQuery(con, "SELECT customer_id, count(*) as order_count
+            FROM sales  group by customer_id order by order_count desc LIMIT 10 ") |>
+  ggplot() + geom_col(aes(x=order_count,y=reorder(factor(customer_id),order_count),fill=customer_id)) +
+               # theme(axis.text.x = element_blank(),
+               # axis.ticks.x = element_blank(),
+               # axis.title.x = element_blank()) +
+                labs(title="Customers Ranked by Order Count", x="Order Count", y="Customer ID")
+```
+
+### Customer Ranked By Total Sales
+
+```{r}
+dbGetQuery(con, "SELECT customer_id, sum(total_price) as order_count
+            FROM sales  group by customer_id order by order_count desc LIMIT 10 ") |>
+  ggplot() + geom_col(aes(x=order_count,y=reorder(factor(customer_id),order_count),fill=customer_id)) +
+               # theme(axis.text.x = element_blank(),
+               # axis.ticks.x = element_blank(),
+               # axis.title.x = element_blank()) +
+                labs(title="Customers Ranked by Total Sales", x="Total Sales", y="Customer ID")
+```
+
+### Customer Randed by Average Sales
+
+```{r}
+cust_average <- dbGetQuery(con, "SELECT customer_id, avg(total_price) as order_count
+            FROM sales  group by customer_id order by order_count desc LIMIT 10 ") 
+
+cust_average$customer_id <- as.factor(cust_average$customer_id)
+  ggplot(cust_average) + geom_col(aes(x=order_count,y=reorder(factor(customer_id),order_count),fill=customer_id)) +
+               theme(axis.text.y = element_blank(),
+               axis.ticks.y = element_blank(),
+               axis.title.y = element_blank()) +
+                labs(title="Customers Ranked by Average Sales", x="Average Sales", y="Customer ID")
+```

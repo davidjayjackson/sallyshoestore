@@ -1,0 +1,143 @@
+---
+title: "Salley's Sales Forecast"
+format: html
+editor: visual
+toc: true
+format: dashboard
+---
+
+#### Load Libraries
+
+```{r, echo=FALSE, message=FALSE}
+library(tidyverse)
+library(pracma)  # Calc Moving Averages
+library(fable)   # forecast
+library(prophet)
+library(duckdb)
+library(tsibble)
+library(lubridate)
+# Connect to DuckDB and write table
+con <- dbConnect(duckdb::duckdb(), dbdir = "sally_shoes.duckdb", read_only = FALSE)
+```
+
+### Create dataframe From Duckdb Table
+
+```{r}
+sales <- dbGetQuery(con, "SELECT * FROM sales ORDER BY order_date")
+sales |> select(order_date,quantity,price,total_price) |> summary()
+```
+
+#### Create Daily Summary Table
+
+```{r}
+daily <- sales |> group_by(order_date) |>
+          summarise(
+    ord_count = n(),
+    ord_sum   = sum(total_price, na.rm = TRUE),
+    ord_median   = median(total_price, na.rm = TRUE),
+    ord_averge   = mean(total_price, na.rm = TRUE)
+  )
+
+daily
+write_csv(daily,"./daily_sales.csv")
+```
+
+#### Calc Rolling Mean
+
+```{r}
+sales$rolling <-  movavg(sales$total_price,n=120,type='s')
+sales
+```
+
+### Plot Rolling Sales
+
+```{r}
+
+sales |> filter(order_date >'2024-01-01') |>
+ggplot() + geom_line(aes(x=order_date,y=rolling)) +
+  geom_smooth(aes(x=order_date,y=rolling), method='lm')
+```
+
+### Time To Forecast: Order Count
+
+```{r}
+sales_ts <- daily |>
+  as_tsibble(index = order_date)
+# Forecast
+fit <- sales_ts |>
+  model(
+    ets   = ETS(ord_count),
+    arima = ARIMA(ord_count),
+    naive = NAIVE(ord_count)
+  )
+
+fc <- fit |>
+  forecast(h = "90 days")
+
+# Filter historical data to show only from Jan 2025 onward
+sales_filtered <- sales_ts |>
+  filter(order_date >= as.Date("2025-01-01"))
+
+
+fc |>
+  autoplot(sales_filtered, level = NULL) +
+  labs(title = "ETS & ARIMA Forecasts of Order Count",
+       y = "Total Price")
+```
+
+### Time To Forecast: Average Sales
+
+```{r}
+sales_ts <- daily |>
+  as_tsibble(index = order_date)
+# Forecast
+fit <- sales_ts |>
+  model(
+    ets   = ETS(ord_averge),
+    arima = ARIMA(ord_averge),
+    naive = NAIVE(ord_averge)
+  )
+
+fc <- fit |>
+  forecast(h = "30 days")
+
+# Filter historical data to show only from Jan 2025 onward
+sales_filtered <- sales_ts |>
+  filter(order_date >= as.Date("2025-07-01"))
+# Accuracy on training data
+fit |> accuracy()
+
+```
+
+```{r}
+fc |>
+  autoplot(sales_filtered, level = NULL) +
+  labs(title = "ETS & ARIMA Forecasts of Average Sales",
+       y = "Total Price")
+```
+
+### Seperate Plot for Each Model
+
+```{r}
+# ETS forecast only
+fc |> 
+  filter(.model == "ets") |>
+  autoplot(sales_filtered,level = c(75, 95)) +
+  labs(title = "ETS Forecast of Total Price (from Jan 2025)",
+       y = "Total Price")
+
+# ARIMA forecast only
+fc |> 
+  filter(.model == "arima") |>
+  autoplot(sales_filtered,level = c(75, 95)) +
+  labs(title = "ARIMA Forecast of Total Price (from Jan 2025)",
+       y = "Total Price")
+
+
+# ARIMA forecast only
+fc |> 
+  filter(.model == "naive") |>
+  autoplot(sales_filtered,level = c(75, 95)) +
+  labs(title = "Navie Forecast of Total Price (from Jan 2025)",
+       y = "Total Price")
+```
