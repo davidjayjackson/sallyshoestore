@@ -24,7 +24,10 @@ con <- dbConnect(duckdb::duckdb(), dbdir = "sally_shoes.duckdb", read_only = FAL
 
 ```{r}
 sales <- dbGetQuery(con, "SELECT * FROM sales ORDER BY order_date")
-sales |> select(order_date,quantity,price,total_price) |> summary()
+sales$brand <- as.factor(sales$brand)
+sales$customer_id <- as.factor(sales$customer_id)
+sales$product_id <- as.factor(sales$product_id)
+sales |> select(brand,order_date,quantity,price,total_price) |> summary()
 ```
 
 #### Create Daily Summary Table
@@ -35,7 +38,7 @@ daily <- sales |> group_by(order_date) |>
     ord_count = n(),
     ord_sum   = sum(total_price, na.rm = TRUE),
     ord_median   = median(total_price, na.rm = TRUE),
-    ord_averge   = mean(total_price, na.rm = TRUE)
+    ord_average   = mean(total_price, na.rm = TRUE)
   )
 
 daily
@@ -93,9 +96,9 @@ sales_ts <- daily |>
 # Forecast
 fit <- sales_ts |>
   model(
-    ets   = ETS(ord_averge),
-    arima = ARIMA(ord_averge),
-    naive = NAIVE(ord_averge)
+    ets   = ETS(ord_average),
+    arima = ARIMA(ord_average),
+    naive = NAIVE(ord_average)
   )
 
 fc <- fit |>
@@ -141,3 +144,114 @@ fc |>
   labs(title = "Navie Forecast of Total Price (from Jan 2025)",
        y = "Total Price")
 ```
+
+### Beginn Weekly Analysis
+
+
+```{r}
+library(ISOweek)
+
+weekly <- sales |>
+  mutate(
+    week = paste0(isoyear(order_date), "-", sprintf("%02d", isoweek(order_date))),
+    week_start = ISOweek2date(
+      paste0(isoyear(order_date), "-W", sprintf("%02d", isoweek(order_date)), "-1")
+    )
+  ) |>
+  group_by(week, week_start) |>
+  summarise(
+    ord_count   = n(),
+    ord_sum     = sum(total_price, na.rm = TRUE),
+    ord_median  = median(total_price, na.rm = TRUE),
+    ord_average = mean(total_price, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+
+summary(weekly)
+```
+
+### Plot Weely Order Count
+
+```{r}
+ggplot(weekly) + geom_histogram(aes(x=ord_count))
+ggplot(weekly) + geom_boxplot(aes(x=ord_count))
+
+ggplot(weekly) + geom_line(aes(x=week_start,y=ord_count))
+```
+
+### Weekly Total Sales
+
+```{r}
+ggplot(weekly) + geom_histogram(aes(x=ord_sum))
+ggplot(weekly) + geom_boxplot(aes(x=ord_sum))
+ggplot(weekly) + geom_line(aes(x=week_start,y=ord_sum))
+```
+
+### Weekly Avearge Sales
+
+```{r}
+ggplot(weekly) + geom_histogram(aes(x=ord_average))
+ggplot(weekly) + geom_boxplot(aes(x=ord_average))
+ggplot(weekly) + geom_col(aes(x=week_start,y=ord_average,fill="Average")) +
+  geom_col(aes(x=week_start,y=ord_median,fill="Median")) +
+  labs(title="Weekly Sales: Median vs Average", y="Average Dollars")
+```
+
+## Monthly Numbers
+
+```{r}
+monthly <- sales |>
+  mutate(
+    month = floor_date(order_date, "month")   # gives first day of each month
+  ) |>
+  group_by(month) |>
+  summarise(
+    ord_count   = n(),
+    ord_sum     = sum(total_price, na.rm = TRUE),
+    ord_median  = median(total_price, na.rm = TRUE),
+    ord_average = mean(total_price, na.rm = TRUE),
+    .groups = "drop"
+  )
+monthly
+```
+
+### Order Count
+
+```{r}
+ggplot(monthly) + geom_histogram(aes(x=ord_count))
+ggplot(monthly) + geom_boxplot(aes(x=ord_count))
+
+ggplot(monthly) + geom_line(aes(x=month,y=ord_count))
+```
+
+### Total Sales
+
+```{r}
+ggplot(monthly) + geom_histogram(aes(x=ord_sum))
+ggplot(monthly) + geom_boxplot(aes(x=ord_sum))
+ggplot(monthly) + geom_line(aes(x=month,y=ord_sum))
+```
+
+###  Avearge  and Median Sales
+
+```{r}
+ggplot(monthly) + geom_histogram(aes(x=ord_average))
+ggplot(monthly) + geom_boxplot(aes(x=ord_average))
+ggplot(monthly) + geom_col(aes(x=month,y=ord_average,fill="Average")) +
+  geom_col(aes(x=month,y=ord_median,fill="Median"))
+```
+
+### Median Sales
+
+```{r}
+ggplot(monthly) + geom_line(aes(x=month,y=ord_average,fill="Average")) +
+  geom_smooth(aes(x=month,y=ord_average),method="lm")
+
+ggplot(monthly) + geom_line(aes(x=month,y=ord_sum,fill="Total")) +
+  geom_smooth(aes(x=month,y=ord_sum),method="lm")
+
+ggplot(monthly) + geom_line(aes(x=month,y=ord_count,fill="Count")) +
+  geom_smooth(aes(x=month,y=ord_count),method="lm")
+```
+
